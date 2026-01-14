@@ -149,16 +149,14 @@ async function getFileTree(octokit, owner, repo, branch = 'main') {
 /**
  * Call Claude API to analyze the issue
  */
-async function analyzeIssue(issueTitle, issueBody, fileTree, guidelines) {
+async function analyzeIssue(issueTitle, issueBody, fileTree) {
   const systemPrompt = `You are a senior software engineer reviewing GitHub issues. Analyze issues pragmatically and avoid hallucinations. Be concise and structured in your responses.
 
 Always respond in markdown format with the following sections:
 1. **Missing Information** - List any critical information that is missing from the issue
 2. **Classification** - Classify as: bug / feature / improvement
 3. **Analysis or Plan** - Provide analysis of the problem or a suggested execution plan
-4. **Relevant Files** - List files from the repository that are likely relevant to this issue
-
-${guidelines ? `\n## Project Guidelines\n\n${guidelines}\n` : ''}`;
+4. **Relevant Files** - List files from the repository that are likely relevant to this issue`;
 
   const userPrompt = `Analyze this GitHub issue:
 
@@ -263,18 +261,12 @@ app.post('/webhook', async (req, res) => {
     const fileTree = await getFileTree(octokit, owner, repo);
     console.log(`[Webhook] Found ${fileTree.length} files in repository`);
 
-    // Try to read guidelines
-    console.log('[Webhook] Attempting to read guidelines...');
-    const guidelines = await readGuidelines(octokit, owner, repo);
-    console.log(`[Webhook] Guidelines found: ${guidelines ? 'Yes' : 'No'}`);
-
     // Analyze issue with Claude
     console.log('[Webhook] Calling Claude API for analysis...');
     const analysis = await analyzeIssue(
       issueData.title,
       issueData.body || '',
-      fileTree,
-      guidelines
+      fileTree
     );
     console.log(`[Webhook] Analysis completed (${analysis.length} characters)`);
 
