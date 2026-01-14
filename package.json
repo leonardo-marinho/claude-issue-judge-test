@@ -1,0 +1,20 @@
+{
+  "name": "github-app-ai-review",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "GitHub App backend for AI-powered issue analysis",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.24.0",
+    "@octokit/rest": "^20.0.2",
+    "express": "^4.18.2",
+    "jsonwebtoken": "^9.0.2"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
+
