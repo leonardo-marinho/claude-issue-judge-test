@@ -9,7 +9,7 @@ const app = express();
 
 // Load environment variables
 const {
-  GITHUB_CLIENT_ID,
+  GITHUB_APP_ID,
   GITHUB_PRIVATE_KEY,
   GITHUB_WEBHOOK_SECRET,
   ANTHROPIC_API_KEY,
@@ -17,7 +17,7 @@ const {
 } = process.env;
 
 // Validate required environment variables
-if (!GITHUB_CLIENT_ID || !GITHUB_PRIVATE_KEY || !GITHUB_WEBHOOK_SECRET || !ANTHROPIC_API_KEY) {
+if (!GITHUB_APP_ID || !GITHUB_PRIVATE_KEY || !GITHUB_WEBHOOK_SECRET || !ANTHROPIC_API_KEY) {
   console.error('Missing required environment variables');
   process.exit(1);
 }
@@ -52,7 +52,7 @@ function generateJWT() {
     {
       iat: now - 60, // Issued at time (1 minute ago to account for clock skew)
       exp: now + 600, // Expires in 10 minutes
-      iss: GITHUB_CLIENT_ID // GitHub App's client ID (recommended over app ID)
+      iss: GITHUB_APP_ID // GitHub App ID (required for GitHub App JWT)
     },
     GITHUB_PRIVATE_KEY.replace(/\\n/g, '\n'),
     { algorithm: 'RS256' }
@@ -104,44 +104,37 @@ async function readGuidelines(octokit, owner, repo) {
 }
 
 /**
- * Get repository file tree using Contents API (requires Contents: Read permission)
+ * Get repository file tree using Git Tree API (1 call, more efficient)
  */
 async function getFileTree(octokit, owner, repo) {
-  const files = [];
-  
-  /**
-   * Recursively fetch files from a directory
-   */
-  async function fetchDirectory(path = '') {
-    try {
-      const { data } = await octokit.rest.repos.getContent({
-        owner,
-        repo,
-        path: path || undefined
-      });
-
-      // Handle both single file and array of items
-      const items = Array.isArray(data) ? data : [data];
-
-      for (const item of items) {
-        if (item.type === 'file') {
-          files.push(item.path);
-        } else if (item.type === 'dir') {
-          // Recursively fetch subdirectories
-          await fetchDirectory(item.path);
-        }
-      }
-    } catch (error) {
-      // Silently skip directories/files we can't access
-      if (error.status !== 404) {
-        console.error(`Error fetching directory ${path}:`, error.message);
-      }
-    }
-  }
-
   try {
-    await fetchDirectory();
-    return files.sort();
+    // 1. Get repo to discover default branch
+    const { data: repoData } = await octokit.rest.repos.get({
+      owner,
+      repo
+    });
+
+    const defaultBranch = repoData.default_branch;
+
+    // 2. Get the commit SHA of the default branch
+    const { data: refData } = await octokit.rest.git.getRef({
+      owner,
+      repo,
+      ref: `heads/${defaultBranch}`
+    });
+
+    // 3. Get the tree recursively
+    const { data: treeData } = await octokit.rest.git.getTree({
+      owner,
+      repo,
+      tree_sha: refData.object.sha,
+      recursive: '1'
+    });
+
+    return treeData.tree
+      .filter(item => item.type === 'blob')
+      .map(item => item.path)
+      .sort();
   } catch (error) {
     console.error('Error fetching file tree:', error.message);
     return [];
@@ -297,52 +290,58 @@ app.post('/webhook', async (req, res) => {
 });
 
 /**
- * Endpoint to get repository file tree
+ * Endpoint to get repository file tree (debug only, not available in production)
  * GET /files?owner=OWNER&repo=REPO&installation_id=INSTALLATION_ID
  */
-app.get('/files', async (req, res) => {
-  const { owner, repo, installation_id } = req.query;
-  
-  console.log(`[Files] Request received for ${owner}/${repo}, installation: ${installation_id}`);
-  
-  if (!owner || !repo || !installation_id) {
-    return res.status(400).json({
-      error: 'Missing required parameters',
-      required: ['owner', 'repo', 'installation_id']
-    });
-  }
+if (process.env.NODE_ENV !== 'production') {
+  app.get('/files', async (req, res) => {
+    const { owner, repo, installation_id } = req.query;
+    
+    console.log(`[Files] Request received for ${owner}/${repo}, installation: ${installation_id}`);
+    
+    if (!owner || !repo || !installation_id) {
+      return res.status(400).json({
+        error: 'Missing required parameters',
+        required: ['owner', 'repo', 'installation_id']
+      });
+    }
 
-  try {
-    // Get installation access token
-    console.log('[Files] Generating installation access token...');
-    const installationToken = await getInstallationToken(parseInt(installation_id, 10));
-    console.log('[Files] Installation token obtained');
+    try {
+      // Get installation access token
+      console.log('[Files] Generating installation access token...');
+      const installationToken = await getInstallationToken(parseInt(installation_id, 10));
+      console.log('[Files] Installation token obtained');
 
-    // Create authenticated Octokit client
-    const octokit = new Octokit({
-      auth: installationToken
-    });
+      // Create authenticated Octokit client
+      const octokit = new Octokit({
+        auth: installationToken
+      });
 
-    // Get repository file tree
-    console.log('[Files] Fetching repository file tree...');
-    const fileTree = await getFileTree(octokit, owner, repo);
-    console.log(`[Files] Found ${fileTree.length} files`);
+      // Get repository file tree
+      console.log('[Files] Fetching repository file tree...');
+      const fileTree = await getFileTree(octokit, owner, repo);
+      console.log(`[Files] Found ${fileTree.length} files`);
 
-    res.status(200).json({
-      owner,
-      repo,
-      fileCount: fileTree.length,
-      files: fileTree
-    });
-  } catch (error) {
-    console.error('[Files] Error fetching file tree:', error);
-    console.error('[Files] Error stack:', error.stack);
-    res.status(500).json({
-      error: 'Failed to fetch file tree',
-      message: error.message
-    });
-  }
-});
+      res.status(200).json({
+        owner,
+        repo,
+        fileCount: fileTree.length,
+        files: fileTree
+      });
+    } catch (error) {
+      console.error('[Files] Error fetching file tree:', error);
+      console.error('[Files] Error stack:', error.stack);
+      res.status(500).json({
+        error: 'Failed to fetch file tree',
+        message: error.message
+      });
+    }
+  });
+} else {
+  app.get('/files', (_, res) => {
+    res.status(404).send('Not available');
+  });
+}
 
 // Health check endpoint
 app.get('/health', (req, res) => {
