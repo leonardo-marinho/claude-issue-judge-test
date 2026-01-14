@@ -171,6 +171,26 @@ async function readFilesBatch(octokit, owner, repo, paths, maxFiles = 5, maxByte
   return results;
 }
 
+async function createWorkingComment(octokit, owner, repo, issueNumber, body) {
+  const { data } = await octokit.rest.issues.createComment({
+    owner,
+    repo,
+    issue_number: issueNumber,
+    body
+  });
+
+  return data.id;
+}
+
+async function updateComment(octokit, owner, repo, commentId, body) {
+  await octokit.rest.issues.updateComment({
+    owner,
+    repo,
+    comment_id: commentId,
+    body
+  });
+}
+
 /**
  * Call Claude API to analyze the issue
  */
@@ -347,6 +367,21 @@ app.post('/webhook', async (req, res) => {
     const fileTree = await getFileTree(octokit, owner, repo);
     console.log(`[Webhook] Found ${fileTree.length} files in repository`);
 
+    const workingMessage = `🤖 **Issue Judge is reviewing this issue**
+
+I'm analyzing the repository context and may fetch a small number of relevant files.
+This usually takes a few seconds. I'll update this comment shortly with findings.`;
+
+    // Create a temporary "working" comment
+    console.log('[Webhook] Creating working comment...');
+    const workingCommentId = await createWorkingComment(
+      octokit,
+      owner,
+      repo,
+      issueNumber,
+      workingMessage
+    );
+
     // Analyze issue with Claude
     console.log('[Webhook] Calling Claude API for analysis...');
     const analysis = await analyzeIssue(
@@ -391,15 +426,16 @@ app.post('/webhook', async (req, res) => {
 
     console.log(`[Webhook] Analysis completed (${finalAnalysis.length} characters)`);
 
-    // Post comment back to issue
-    console.log('[Webhook] Posting comment to issue...');
-    await octokit.rest.issues.createComment({
+    // Update the working comment with the final analysis
+    console.log('[Webhook] Updating working comment with final analysis...');
+    await updateComment(
+      octokit,
       owner,
       repo,
-      issue_number: issueNumber,
-      body: finalAnalysis
-    });
-    console.log('[Webhook] Comment posted successfully');
+      workingCommentId,
+      finalAnalysis
+    );
+    console.log('[Webhook] Comment updated successfully');
 
     res.status(200).send('Analysis completed');
   } catch (error) {
