@@ -104,14 +104,8 @@ async function readGuidelines(octokit, owner, repo) {
 }
 
 /**
- * Get a compact representation of the full repository tree.
- * All files are included, but paths are aggregated to reduce verbosity.
- * Example:
- * - frontend/
- *   - app/ (42 files)
- *   - components/ (18 files)
- * - backend/
- *   - src/ (55 files)
+ * Get full repository file tree (all files, flat list).
+ * This favors maximum context over compactness.
  */
 async function getFileTree(octokit, owner, repo) {
   try {
@@ -138,30 +132,10 @@ async function getFileTree(octokit, owner, repo) {
       recursive: '1'
     });
 
-    // Aggregate file counts by directory
-    const dirMap = new Map();
-
-    for (const item of treeData.tree) {
-      if (item.type !== 'blob') continue;
-
-      const parts = item.path.split('/');
-
-      // Build all parent directories
-      let currentPath = '';
-      for (let i = 0; i < parts.length - 1; i++) {
-        currentPath = currentPath ? `${currentPath}/${parts[i]}` : parts[i];
-        dirMap.set(currentPath, (dirMap.get(currentPath) || 0) + 1);
-      }
-    }
-
-    /**
-     * Format output as a readable, compact tree:
-     * - dir/
-     *   - subdir/ (N files)
-     */
-    return Array.from(dirMap.entries())
-      .sort(([a], [b]) => a.localeCompare(b))
-      .map(([path, count]) => `${path}/ (${count} files)`);
+    return treeData.tree
+      .filter(item => item.type === 'blob')
+      .map(item => item.path)
+      .sort();
   } catch (error) {
     console.error('Error fetching file tree:', error.message);
     return [];
@@ -286,7 +260,7 @@ Response constraints:
 **Body:**
 ${issueBody}
 
-**Repository Structure (compact, full tree):**
+**Repository Files (full list):**
 ${fileTree.length > 0 ? fileTree.join('\n') : 'No files found'}
 
 ${extraFiles.length > 0 ? `
@@ -298,7 +272,7 @@ ${extraFiles.map(f => `\n---\n### ${f.path}\n${f.content}`).join('\n')}
   try {
     const message = await anthropic.messages.create({
       model: 'claude-sonnet-4-5-20250929',
-      max_tokens: 900,
+      max_tokens: 2000,
       system: systemPrompt,
       messages: [
         {
