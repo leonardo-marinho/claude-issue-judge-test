@@ -104,10 +104,16 @@ async function readGuidelines(octokit, owner, repo) {
 }
 
 /**
- * Get a shallow repository tree (directories + files up to depth 3)
- * This is meant for orientation, not full enumeration.
+ * Get a compact representation of the full repository tree.
+ * All files are included, but paths are aggregated to reduce verbosity.
+ * Example:
+ * - frontend/
+ *   - app/ (42 files)
+ *   - components/ (18 files)
+ * - backend/
+ *   - src/ (55 files)
  */
-async function getFileTree(octokit, owner, repo, maxDepth = 3) {
+async function getFileTree(octokit, owner, repo) {
   try {
     // 1. Get repo to discover default branch
     const { data: repoData } = await octokit.rest.repos.get({
@@ -124,7 +130,7 @@ async function getFileTree(octokit, owner, repo, maxDepth = 3) {
       ref: `heads/${defaultBranch}`
     });
 
-    // 3. Get the full tree once
+    // 3. Get the full tree recursively (single API call)
     const { data: treeData } = await octokit.rest.git.getTree({
       owner,
       repo,
@@ -132,29 +138,30 @@ async function getFileTree(octokit, owner, repo, maxDepth = 3) {
       recursive: '1'
     });
 
-    /**
-     * Reduce paths to a shallow, folder-oriented view.
-     * Example output:
-     * - frontend/
-     *   - app/
-     *     - layout.tsx
-     * - backend/
-     *   - src/
-     *     - main.ts
-     */
-    const shallowPaths = new Set();
+    // Aggregate file counts by directory
+    const dirMap = new Map();
 
     for (const item of treeData.tree) {
       if (item.type !== 'blob') continue;
 
       const parts = item.path.split('/');
 
-      const limitedPath = parts.slice(0, maxDepth).join('/');
-
-      shallowPaths.add(limitedPath);
+      // Build all parent directories
+      let currentPath = '';
+      for (let i = 0; i < parts.length - 1; i++) {
+        currentPath = currentPath ? `${currentPath}/${parts[i]}` : parts[i];
+        dirMap.set(currentPath, (dirMap.get(currentPath) || 0) + 1);
+      }
     }
 
-    return Array.from(shallowPaths).sort();
+    /**
+     * Format output as a readable, compact tree:
+     * - dir/
+     *   - subdir/ (N files)
+     */
+    return Array.from(dirMap.entries())
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([path, count]) => `${path}/ (${count} files)`);
   } catch (error) {
     console.error('Error fetching file tree:', error.message);
     return [];
@@ -279,7 +286,7 @@ Response constraints:
 **Body:**
 ${issueBody}
 
-**Repository Structure (shallow, up to 3 levels):**
+**Repository Structure (compact, full tree):**
 ${fileTree.length > 0 ? fileTree.join('\n') : 'No files found'}
 
 ${extraFiles.length > 0 ? `
