@@ -104,42 +104,44 @@ async function readGuidelines(octokit, owner, repo) {
 }
 
 /**
- * Get repository file tree
+ * Get repository file tree using Contents API (requires Contents: Read permission)
  */
-async function getFileTree(octokit, owner, repo, branch = 'main') {
+async function getFileTree(octokit, owner, repo) {
+  const files = [];
+  
+  /**
+   * Recursively fetch files from a directory
+   */
+  async function fetchDirectory(path = '') {
+    try {
+      const { data } = await octokit.rest.repos.getContent({
+        owner,
+        repo,
+        path: path || undefined
+      });
+
+      // Handle both single file and array of items
+      const items = Array.isArray(data) ? data : [data];
+
+      for (const item of items) {
+        if (item.type === 'file') {
+          files.push(item.path);
+        } else if (item.type === 'dir') {
+          // Recursively fetch subdirectories
+          await fetchDirectory(item.path);
+        }
+      }
+    } catch (error) {
+      // Silently skip directories/files we can't access
+      if (error.status !== 404) {
+        console.error(`Error fetching directory ${path}:`, error.message);
+      }
+    }
+  }
+
   try {
-    // Get default branch if not provided
-    const { data: repoData } = await octokit.rest.repos.get({
-      owner,
-      repo
-    });
-    const defaultBranch = branch === 'main' ? repoData.default_branch : branch;
-
-    // Get the tree recursively
-    const { data: refData } = await octokit.rest.git.getRef({
-      owner,
-      repo,
-      ref: `heads/${defaultBranch}`
-    });
-
-    const { data: commitData } = await octokit.rest.git.getCommit({
-      owner,
-      repo,
-      commit_sha: refData.object.sha
-    });
-
-    const { data: treeData } = await octokit.rest.git.getTree({
-      owner,
-      repo,
-      tree_sha: commitData.tree.sha,
-      recursive: '1'
-    });
-
-    // Filter to only files (not directories) and return paths
-    return treeData.tree
-      .filter(item => item.type === 'blob')
-      .map(item => item.path)
-      .sort();
+    await fetchDirectory();
+    return files.sort();
   } catch (error) {
     console.error('Error fetching file tree:', error.message);
     return [];
@@ -171,7 +173,7 @@ ${fileTree.length > 200 ? `\n... and ${fileTree.length - 200} more files` : ''}`
 
   try {
     const message = await anthropic.messages.create({
-      model: 'claude-3-5-sonnet-20241022',
+      model: 'claude-sonnet-4-5-20250929',
       max_tokens: 2000,
       system: systemPrompt,
       messages: [
