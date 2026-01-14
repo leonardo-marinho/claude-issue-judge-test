@@ -104,9 +104,10 @@ async function readGuidelines(octokit, owner, repo) {
 }
 
 /**
- * Get repository file tree using Git Tree API (1 call, more efficient)
+ * Get a shallow repository tree (directories + files up to depth 3)
+ * This is meant for orientation, not full enumeration.
  */
-async function getFileTree(octokit, owner, repo) {
+async function getFileTree(octokit, owner, repo, maxDepth = 3) {
   try {
     // 1. Get repo to discover default branch
     const { data: repoData } = await octokit.rest.repos.get({
@@ -123,7 +124,7 @@ async function getFileTree(octokit, owner, repo) {
       ref: `heads/${defaultBranch}`
     });
 
-    // 3. Get the tree recursively
+    // 3. Get the full tree once
     const { data: treeData } = await octokit.rest.git.getTree({
       owner,
       repo,
@@ -131,10 +132,29 @@ async function getFileTree(octokit, owner, repo) {
       recursive: '1'
     });
 
-    return treeData.tree
-      .filter(item => item.type === 'blob')
-      .map(item => item.path)
-      .sort();
+    /**
+     * Reduce paths to a shallow, folder-oriented view.
+     * Example output:
+     * - frontend/
+     *   - app/
+     *     - layout.tsx
+     * - backend/
+     *   - src/
+     *     - main.ts
+     */
+    const shallowPaths = new Set();
+
+    for (const item of treeData.tree) {
+      if (item.type !== 'blob') continue;
+
+      const parts = item.path.split('/');
+
+      const limitedPath = parts.slice(0, maxDepth).join('/');
+
+      shallowPaths.add(limitedPath);
+    }
+
+    return Array.from(shallowPaths).sort();
   } catch (error) {
     console.error('Error fetching file tree:', error.message);
     return [];
@@ -259,9 +279,8 @@ Response constraints:
 **Body:**
 ${issueBody}
 
-**Repository Files:**
-${fileTree.length > 0 ? fileTree.slice(0, 100).join('\n') : 'No files found'}
-${fileTree.length > 100 ? `\n... and ${fileTree.length - 100} more files` : ''}
+**Repository Structure (shallow, up to 3 levels):**
+${fileTree.length > 0 ? fileTree.join('\n') : 'No files found'}
 
 ${extraFiles.length > 0 ? `
 **Additional File Contents (requested):**
