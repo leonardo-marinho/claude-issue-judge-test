@@ -195,74 +195,103 @@ ${fileTree.length > 200 ? `\n... and ${fileTree.length - 200} more files` : ''}`
  * Main webhook handler
  */
 app.post('/webhook', async (req, res) => {
+  console.log('[Webhook] Received webhook request');
+  
   // Verify webhook signature
   const signature = req.headers['x-hub-signature-256'];
   if (!verifySignature(req.body, signature)) {
+    console.log('[Webhook] Invalid signature');
     return res.status(401).send('Invalid signature');
   }
+  console.log('[Webhook] Signature verified');
 
   const { action, comment, issue, installation, repository } = req.body;
+  const eventType = req.headers['x-github-event'];
+  console.log(`[Webhook] Event type: ${eventType}, Action: ${action}`);
 
   // Only process issue_comment events
-  if (req.headers['x-github-event'] !== 'issue_comment') {
+  if (eventType !== 'issue_comment') {
+    console.log(`[Webhook] Ignoring event type: ${eventType}`);
     return res.status(200).send('Event ignored');
   }
 
-  // Only process when comment is created and contains /ai-review
-  if (action !== 'created' || !comment?.body?.includes('/ai-review')) {
+  // Only process when comment is created and contains @claude-judge
+  const commentBody = comment?.body || '';
+  const hasCommand = commentBody.includes('@claude-judge');
+  console.log(`[Webhook] Comment body preview: ${commentBody.substring(0, 100)}...`);
+  console.log(`[Webhook] Contains @claude-judge: ${hasCommand}`);
+  
+  if (action !== 'created' || !hasCommand) {
+    console.log('[Webhook] Command not found or action not created');
     return res.status(200).send('Command not found');
   }
 
   // Early return if no installation ID
   if (!installation?.id) {
+    console.log('[Webhook] Missing installation ID');
     return res.status(400).send('Missing installation ID');
   }
+  console.log(`[Webhook] Installation ID: ${installation.id}`);
 
   try {
+    const owner = repository.owner.login;
+    const repo = repository.name;
+    const issueNumber = issue.number;
+    console.log(`[Webhook] Processing issue #${issueNumber} in ${owner}/${repo}`);
+
     // Get installation access token
+    console.log('[Webhook] Generating installation access token...');
     const installationToken = await getInstallationToken(installation.id);
+    console.log('[Webhook] Installation token obtained');
 
     // Create authenticated Octokit client
     const octokit = new Octokit({
       auth: installationToken
     });
 
-    const owner = repository.owner.login;
-    const repo = repository.name;
-    const issueNumber = issue.number;
-
     // Fetch issue details
+    console.log('[Webhook] Fetching issue details...');
     const { data: issueData } = await octokit.rest.issues.get({
       owner,
       repo,
       issue_number: issueNumber
     });
+    console.log(`[Webhook] Issue title: ${issueData.title}`);
 
     // Get repository file tree
+    console.log('[Webhook] Fetching repository file tree...');
     const fileTree = await getFileTree(octokit, owner, repo);
+    console.log(`[Webhook] Found ${fileTree.length} files in repository`);
 
     // Try to read guidelines
+    console.log('[Webhook] Attempting to read guidelines...');
     const guidelines = await readGuidelines(octokit, owner, repo);
+    console.log(`[Webhook] Guidelines found: ${guidelines ? 'Yes' : 'No'}`);
 
     // Analyze issue with Claude
+    console.log('[Webhook] Calling Claude API for analysis...');
     const analysis = await analyzeIssue(
       issueData.title,
       issueData.body || '',
       fileTree,
       guidelines
     );
+    console.log(`[Webhook] Analysis completed (${analysis.length} characters)`);
 
     // Post comment back to issue
+    console.log('[Webhook] Posting comment to issue...');
     await octokit.rest.issues.createComment({
       owner,
       repo,
       issue_number: issueNumber,
       body: analysis
     });
+    console.log('[Webhook] Comment posted successfully');
 
     res.status(200).send('Analysis completed');
   } catch (error) {
-    console.error('Error processing webhook:', error);
+    console.error('[Webhook] Error processing webhook:', error);
+    console.error('[Webhook] Error stack:', error.stack);
     res.status(500).send('Internal server error');
   }
 });
