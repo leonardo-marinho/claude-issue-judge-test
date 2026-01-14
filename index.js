@@ -142,9 +142,39 @@ async function getFileTree(octokit, owner, repo) {
 }
 
 /**
+ * Read multiple files from repo in batch with limits
+ */
+async function readFilesBatch(octokit, owner, repo, paths, maxFiles = 5, maxBytes = 200_000) {
+  const results = [];
+  let usedBytes = 0;
+
+  for (const path of paths.slice(0, maxFiles)) {
+    try {
+      const { data } = await octokit.rest.repos.getContent({ owner, repo, path });
+
+      if (data.type !== 'file' || data.encoding !== 'base64') continue;
+
+      const content = Buffer.from(data.content, 'base64').toString('utf-8');
+      const size = Buffer.byteLength(content, 'utf-8');
+
+      if (usedBytes + size > maxBytes) break;
+
+      usedBytes += size;
+      results.push({ path, content });
+    } catch (error) {
+      if (error.status !== 404) {
+        console.error(`Error reading file ${path}:`, error.message);
+      }
+    }
+  }
+
+  return results;
+}
+
+/**
  * Call Claude API to analyze the issue
  */
-async function analyzeIssue(issueTitle, issueBody, fileTree) {
+async function analyzeIssue(issueTitle, issueBody, fileTree, extraFiles = []) {
   const systemPrompt = `
 You are a senior software engineer acting as a pragmatic technical lead reviewing GitHub issues.
 
@@ -164,6 +194,12 @@ Guidelines:
 - Base your analysis strictly on the provided repository context
 - If you make assumptions, state them explicitly
 - If important information is missing and cannot be inferred, ask for it
+
+If additional file contents would materially improve the analysis:
+- Add a final section titled exactly: "## 📥 Requested Files"
+- List up to 5 specific file paths from the repository
+- Request files only if their contents are necessary for a better answer
+- Do NOT request directories or globs
 
 When appropriate, suggest:
 - Official upgrade paths, CLIs, codemods, or documented workflows
@@ -205,7 +241,13 @@ ${issueBody}
 
 **Repository Files:**
 ${fileTree.length > 0 ? fileTree.slice(0, 100).join('\n') : 'No files found'}
-${fileTree.length > 100 ? `\n... and ${fileTree.length - 100} more files` : ''}`;
+${fileTree.length > 100 ? `\n... and ${fileTree.length - 100} more files` : ''}
+
+${extraFiles.length > 0 ? `
+**Additional File Contents (requested):**
+${extraFiles.map(f => `\n---\n### ${f.path}\n${f.content}`).join('\n')}
+` : ''}
+`;
 
   try {
     const message = await anthropic.messages.create({
@@ -312,7 +354,42 @@ app.post('/webhook', async (req, res) => {
       issueData.body || '',
       fileTree
     );
-    console.log(`[Webhook] Analysis completed (${analysis.length} characters)`);
+
+    // Check if Claude requested specific files
+    const requestedMatch = analysis.match(/## 📥 Requested Files([\s\S]*)$/m);
+    let finalAnalysis = analysis;
+
+    if (requestedMatch) {
+      const requestedPaths = requestedMatch[1]
+        .split('\n')
+        .map(l => l.replace(/^[-*]\s*/, '').trim())
+        .filter(Boolean);
+
+      if (requestedPaths.length > 0) {
+        console.log('[Webhook] Claude requested files:', requestedPaths);
+
+        const extraFiles = await readFilesBatch(
+          octokit,
+          owner,
+          repo,
+          requestedPaths,
+          5,
+          200_000
+        );
+
+        if (extraFiles.length > 0) {
+          console.log('[Webhook] Re-running analysis with requested file contents');
+          finalAnalysis = await analyzeIssue(
+            issueData.title,
+            issueData.body || '',
+            fileTree,
+            extraFiles
+          );
+        }
+      }
+    }
+
+    console.log(`[Webhook] Analysis completed (${finalAnalysis.length} characters)`);
 
     // Post comment back to issue
     console.log('[Webhook] Posting comment to issue...');
@@ -320,7 +397,7 @@ app.post('/webhook', async (req, res) => {
       owner,
       repo,
       issue_number: issueNumber,
-      body: analysis
+      body: finalAnalysis
     });
     console.log('[Webhook] Comment posted successfully');
 
