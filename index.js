@@ -145,13 +145,53 @@ async function getFileTree(octokit, owner, repo) {
  * Call Claude API to analyze the issue
  */
 async function analyzeIssue(issueTitle, issueBody, fileTree) {
-  const systemPrompt = `You are a senior software engineer reviewing GitHub issues. Analyze issues pragmatically and avoid hallucinations. Be concise and structured in your responses.
+  const systemPrompt = `
+You are a senior software engineer acting as a pragmatic technical lead reviewing GitHub issues.
 
-Always respond in markdown format with the following sections:
-1. **Missing Information** - List any critical information that is missing from the issue
-2. **Classification** - Classify as: bug / feature / improvement
-3. **Analysis or Plan** - Provide analysis of the problem or a suggested execution plan
-4. **Relevant Files** - List files from the repository that are likely relevant to this issue`;
+Your goals are to help the team:
+- Understand the problem clearly
+- Identify missing or blocking information
+- Decide whether the issue is a bug, feature, or improvement
+- Propose a realistic execution plan
+- Break the work into subtasks when the scope is non-trivial
+- Point out relevant files in the codebase
+
+Guidelines:
+- Be concise and direct
+- Avoid generic advice or vague best practices
+- Do not hallucinate code behavior
+- Base your analysis strictly on the provided repository context
+- If you make assumptions, state them explicitly
+- If important information is missing, do not guess — ask for it
+
+When appropriate, suggest:
+- How the issue could be split into smaller tasks
+- Potential risks or technical considerations
+- Whether parts of the work can be done in parallel
+
+Always respond in markdown, using exactly the following sections and emojis:
+
+## ❓ Missing Information
+List critical information that is required or would significantly affect the solution.
+
+## 🏷️ Classification
+Classify the issue as: bug / feature / improvement, with a brief justification.
+
+## 🧠 Analysis or Plan
+Explain the current state (if relevant) and propose a clear execution plan.
+If assumptions are made, state them explicitly.
+
+## 🧩 Suggested Subtasks
+If the issue is non-trivial, propose a list of subtasks this issue could be split into.
+If it is trivial, explicitly state that no split is needed.
+
+## 📂 Relevant Files
+List files or directories that are likely involved, with a short explanation when useful.
+
+## ⚠️ Risks or Notes
+Call out important edge cases, risks, or follow-up considerations.
+If none apply, state that explicitly.
+`;
 
   const userPrompt = `Analyze this GitHub issue:
 
@@ -288,60 +328,6 @@ app.post('/webhook', async (req, res) => {
     res.status(500).send('Internal server error');
   }
 });
-
-/**
- * Endpoint to get repository file tree (debug only, not available in production)
- * GET /files?owner=OWNER&repo=REPO&installation_id=INSTALLATION_ID
- */
-if (process.env.NODE_ENV !== 'production') {
-  app.get('/files', async (req, res) => {
-    const { owner, repo, installation_id } = req.query;
-    
-    console.log(`[Files] Request received for ${owner}/${repo}, installation: ${installation_id}`);
-    
-    if (!owner || !repo || !installation_id) {
-      return res.status(400).json({
-        error: 'Missing required parameters',
-        required: ['owner', 'repo', 'installation_id']
-      });
-    }
-
-    try {
-      // Get installation access token
-      console.log('[Files] Generating installation access token...');
-      const installationToken = await getInstallationToken(parseInt(installation_id, 10));
-      console.log('[Files] Installation token obtained');
-
-      // Create authenticated Octokit client
-      const octokit = new Octokit({
-        auth: installationToken
-      });
-
-      // Get repository file tree
-      console.log('[Files] Fetching repository file tree...');
-      const fileTree = await getFileTree(octokit, owner, repo);
-      console.log(`[Files] Found ${fileTree.length} files`);
-
-      res.status(200).json({
-        owner,
-        repo,
-        fileCount: fileTree.length,
-        files: fileTree
-      });
-    } catch (error) {
-      console.error('[Files] Error fetching file tree:', error);
-      console.error('[Files] Error stack:', error.stack);
-      res.status(500).json({
-        error: 'Failed to fetch file tree',
-        message: error.message
-      });
-    }
-  });
-} else {
-  app.get('/files', (_, res) => {
-    res.status(404).send('Not available');
-  });
-}
 
 // Health check endpoint
 app.get('/health', (req, res) => {
