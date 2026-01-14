@@ -8,7 +8,7 @@ const app = express();
 
 // Load environment variables
 const {
-  GITHUB_APP_ID,
+  GITHUB_CLIENT_ID,
   GITHUB_PRIVATE_KEY,
   GITHUB_WEBHOOK_SECRET,
   ANTHROPIC_API_KEY,
@@ -16,7 +16,7 @@ const {
 } = process.env;
 
 // Validate required environment variables
-if (!GITHUB_APP_ID || !GITHUB_PRIVATE_KEY || !GITHUB_WEBHOOK_SECRET || !ANTHROPIC_API_KEY) {
+if (!GITHUB_CLIENT_ID || !GITHUB_PRIVATE_KEY || !GITHUB_WEBHOOK_SECRET || !ANTHROPIC_API_KEY) {
   console.error('Missing required environment variables');
   process.exit(1);
 }
@@ -51,7 +51,7 @@ function generateJWT() {
     {
       iat: now - 60, // Issued at time (1 minute ago to account for clock skew)
       exp: now + 600, // Expires in 10 minutes
-      iss: GITHUB_APP_ID
+      iss: GITHUB_CLIENT_ID // GitHub App's client ID (recommended over app ID)
     },
     GITHUB_PRIVATE_KEY.replace(/\\n/g, '\n'),
     { algorithm: 'RS256' }
