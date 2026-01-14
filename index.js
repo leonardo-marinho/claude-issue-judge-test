@@ -239,6 +239,12 @@ app.post('/webhook', async (req, res) => {
     const issueNumber = issue.number;
     console.log(`[Webhook] Processing issue #${issueNumber} in ${owner}/${repo}`);
 
+    // Log link to files endpoint
+    const protocol = req.protocol || 'http';
+    const host = req.get('host') || `localhost:${PORT}`;
+    const filesUrl = `${protocol}://${host}/files?owner=${encodeURIComponent(owner)}&repo=${encodeURIComponent(repo)}&installation_id=${installation.id}`;
+    console.log(`[Webhook] Files endpoint URL: ${filesUrl}`);
+
     // Get installation access token
     console.log('[Webhook] Generating installation access token...');
     const installationToken = await getInstallationToken(installation.id);
@@ -287,6 +293,54 @@ app.post('/webhook', async (req, res) => {
     console.error('[Webhook] Error processing webhook:', error);
     console.error('[Webhook] Error stack:', error.stack);
     res.status(500).send('Internal server error');
+  }
+});
+
+/**
+ * Endpoint to get repository file tree
+ * GET /files?owner=OWNER&repo=REPO&installation_id=INSTALLATION_ID
+ */
+app.get('/files', async (req, res) => {
+  const { owner, repo, installation_id } = req.query;
+  
+  console.log(`[Files] Request received for ${owner}/${repo}, installation: ${installation_id}`);
+  
+  if (!owner || !repo || !installation_id) {
+    return res.status(400).json({
+      error: 'Missing required parameters',
+      required: ['owner', 'repo', 'installation_id']
+    });
+  }
+
+  try {
+    // Get installation access token
+    console.log('[Files] Generating installation access token...');
+    const installationToken = await getInstallationToken(parseInt(installation_id, 10));
+    console.log('[Files] Installation token obtained');
+
+    // Create authenticated Octokit client
+    const octokit = new Octokit({
+      auth: installationToken
+    });
+
+    // Get repository file tree
+    console.log('[Files] Fetching repository file tree...');
+    const fileTree = await getFileTree(octokit, owner, repo);
+    console.log(`[Files] Found ${fileTree.length} files`);
+
+    res.status(200).json({
+      owner,
+      repo,
+      fileCount: fileTree.length,
+      files: fileTree
+    });
+  } catch (error) {
+    console.error('[Files] Error fetching file tree:', error);
+    console.error('[Files] Error stack:', error.stack);
+    res.status(500).json({
+      error: 'Failed to fetch file tree',
+      message: error.message
+    });
   }
 });
 
