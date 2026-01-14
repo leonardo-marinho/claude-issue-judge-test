@@ -182,8 +182,17 @@ Explain the current state (if relevant) and propose a clear execution plan.
 If assumptions are made, state them explicitly.
 
 ## 🧩 Suggested Subtasks
-If the issue is non-trivial, propose a list of subtasks this issue could be split into.
-If it is trivial, explicitly state that no split is needed.
+Only propose subtasks if the issue is large enough to resemble an epic.
+Subtasks should represent meaningful implementation chunks (e.g. features, modules, or major refactors),
+not low-level steps such as validation, error handling, fetching data, or wiring.
+
+When subtasks are proposed:
+- Use GitHub-style checkboxes
+- Each subtask must start with "- [ ]"
+- Limit to a maximum of 6 subtasks
+- Each subtask must fit on a single concise line
+
+If the issue does not warrant being split, explicitly state that no subtasks are needed.
 
 ## 📂 Relevant Files
 List files or directories that are likely involved, with a short explanation when useful.
@@ -191,6 +200,12 @@ List files or directories that are likely involved, with a short explanation whe
 ## ⚠️ Risks or Notes
 Call out important edge cases, risks, or follow-up considerations.
 If none apply, state that explicitly.
+
+Response length constraints:
+- Use at most 5 bullet points per section
+- Keep each bullet point to 1–2 short sentences
+- Do not exceed ~400 words total
+- Summarize aggressively when needed and explicitly note omissions
 `;
 
   const userPrompt = `Analyze this GitHub issue:
@@ -201,13 +216,13 @@ If none apply, state that explicitly.
 ${issueBody}
 
 **Repository Files:**
-${fileTree.length > 0 ? fileTree.slice(0, 200).join('\n') : 'No files found'}
-${fileTree.length > 200 ? `\n... and ${fileTree.length - 200} more files` : ''}`;
+${fileTree.length > 0 ? fileTree.slice(0, 100).join('\n') : 'No files found'}
+${fileTree.length > 100 ? `\n... and ${fileTree.length - 100} more files` : ''}`;
 
   try {
     const message = await anthropic.messages.create({
       model: 'claude-sonnet-4-5-20250929',
-      max_tokens: 2000,
+      max_tokens: 900,
       system: systemPrompt,
       messages: [
         {
@@ -338,4 +353,3 @@ app.get('/health', (req, res) => {
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
-
